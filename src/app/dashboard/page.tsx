@@ -62,6 +62,8 @@ cbh_zomato_sales_count?: number | null; cbh_zomato_sales_value?: number | null;
 };
 // Outlet reports for dates on/after this are entered as separate BH and CBH sales. Older dates keep the single combined entry.
 const BRAND_SPLIT_FROM = "2026-10-09";
+// Entry limits (typo guard) apply only to report dates on/after this, so older and backfilled reports are never blocked.
+const ENTRY_LIMITS_FROM = "2026-10-26";
 // Card rows showing BH vs CBH sales for a report (empty for older reports that only have the combined total).
 const brandSalesItems = (r: any): { label: string; value: string; color?: string }[] => {
   if (!r || r.bh_shop_sales_value == null) return [];
@@ -3566,6 +3568,32 @@ icbh_zomato_rating: parseFloat(d.icbh_zomato_rating) || null,
     is_backfill: isBackfill,
     no_points: isBackfill && outletWasOff,
   };
+  // ── Entry limits (typo guard) ──────────────────────────────────────────
+  // Each outlet has a daily maximum per channel (shop / swiggy / zomato) for
+  // orders and for sales value, stored in the outlet_entry_limits table. A
+  // number above the limit is almost always an extra-zero typo, so the report
+  // is NOT saved until it is fixed. Only applies to report dates from
+  // ENTRY_LIMITS_FROM. If the table is missing, empty, or can't be read,
+  // nothing is blocked (fails open) so reports are never stuck by this check.
+  if (outletEntryDate >= ENTRY_LIMITS_FROM) {
+    const { data: _lim, error: _limErr } = await supabase.from("outlet_entry_limits").select("channel, max_orders, max_value").eq("outlet_id", activeOutlet);
+    if (!_limErr && _lim && _lim.length) {
+      const _over: string[] = [];
+      _lim.forEach((l: any) => {
+        const ch = String(l.channel);
+        const cnt = Number((payload as any)[`${ch}_sales_count`]) || 0;
+        const val = Number((payload as any)[`${ch}_sales_value`]) || 0;
+        const nm = ch.charAt(0).toUpperCase() + ch.slice(1);
+        if (l.max_orders != null && cnt > Number(l.max_orders)) _over.push(`${nm} orders: you entered ${cnt}, the limit is ${l.max_orders}`);
+        if (l.max_value != null && val > Number(l.max_value)) _over.push(`${nm} sales value: you entered ₹${val.toLocaleString("en-IN")}, the limit is ₹${Number(l.max_value).toLocaleString("en-IN")}`);
+      });
+      if (_over.length) {
+        setOutletSubmitting(false);
+        alert("Report NOT submitted — some numbers look too high:\n\n" + _over.join("\n") + "\n\nPlease check for an extra zero and correct it. If the numbers are really correct, ask Niranjana or Nishant to raise this outlet's limit.");
+        return;
+      }
+    }
+  }
   let error;
   if (d.editing_id) {
     const result = await supabase.from("outlet_reports").update(payload).eq("id", d.editing_id);
