@@ -8260,3 +8260,5 @@ else await fetchOutletReportsByDate(outletEntryDate);
     </div>
   );
 }
+
+
