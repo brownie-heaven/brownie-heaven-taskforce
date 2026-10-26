@@ -65,6 +65,18 @@ cbh_zomato_sales_count?: number | null; cbh_zomato_sales_value?: number | null;
 const BRAND_SPLIT_FROM = "2026-10-09";
 // Entry limits (typo guard) apply only to report dates on/after this, so older and backfilled reports are never blocked.
 const ENTRY_LIMITS_FROM = "2026-10-26";
+// Sidebar items Nishant can hide/show for himself (the home Dashboard always stays).
+const SB_HIDDEN_KEY = "sidebar_hidden_nishant";
+const SB_ITEMS: [string, string][] = [
+  ["owner_outlets", "🏪 Outlet Reports"], ["sales_target", "🎯 Outlet P&L"], ["purchase_vendors", "🛒 Purchase & Vendors"],
+  ["auto_reviews", "⭐ Auto Reviews"], ["leaderboard", "🏆 Leaderboard"], ["orders_race", "⚔️ Orders Race"],
+  ["analytics", "◬ Analytics"], ["item_perf", "📈 Item Performance"], ["admin_dq", "🛡 Admin & Data Quality"],
+  ["all_reports", "📋 Reports"], ["outlet_reports", "🏪 Outlets"], ["history", "📅 History"],
+  ["team_dashboards", "👥 Team Dashboards"], ["active_status", "🟢 Active Status"], ["messages", "💬 Messages"],
+  ["net_realisation", "🧾 Net Realisation"], ["cash_flow", "📉 Profit Forecast"], ["sales_forecast", "📈 Sales Forecast"],
+  ["attendance", "👥 People & Labour"], ["production", "🏭 Production"], ["ops_audits", "🔍 Operations & Audits"],
+  ["fines", "⚖️ Fines"], ["niranjana_report", "📝 Niranjana's Report"], ["help", "🛟 Help"],
+];
 // Card rows showing BH vs CBH sales for a report (empty for older reports that only have the combined total).
 const brandSalesItems = (r: any): { label: string; value: string; color?: string }[] => {
   if (!r || r.bh_shop_sales_value == null) return [];
@@ -3657,6 +3669,26 @@ else await fetchOutletReportsByDate(outletEntryDate);
   const hasOutlets = (user?.outlets?.length || 0) > 0;
   const isFO = user?.role === "Founder's Office";
   const isOwner = user?.role === "Owner";
+  // ── Sidebar: hide / show menu items — Nishant (Owner) only, his own view ──
+  // Saved in app_settings (key sidebar_hidden_nishant) so it follows him across devices.
+  const [sbHidden, setSbHidden] = useState<string[]>([]);
+  const [sbPanelOpen, setSbPanelOpen] = useState(false);
+  useEffect(() => {
+    if (user?.role !== "Owner") return;
+    (async () => {
+      const { data } = await supabase.from("app_settings").select("value").eq("key", SB_HIDDEN_KEY).maybeSingle();
+      try {
+        const arr = JSON.parse(data?.value || "[]");
+        if (Array.isArray(arr)) setSbHidden(arr.filter((k: any) => typeof k === "string" && /^[a-z_]+$/.test(k)));
+      } catch { /* ignore a bad value */ }
+    })();
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [user?.id]);
+  const toggleSbItem = async (key: string) => {
+    const next = sbHidden.includes(key) ? sbHidden.filter((k) => k !== key) : [...sbHidden, key];
+    setSbHidden(next);
+    await supabase.from("app_settings").upsert({ key: SB_HIDDEN_KEY, value: JSON.stringify(next), updated_at: new Date().toISOString() }, { onConflict: "key" });
+  };
   const isArun = user?.id === "arun";
   // Outlet Targets — Arun-only screen to change an outlet's monthly target
   // from a chosen month onward, without rewriting past months. Each change
@@ -3883,6 +3915,30 @@ else await fetchOutletReportsByDate(outletEntryDate);
       {user && <PushRegister staffId={user.id} />}
       {isFO && <NudgeToast />}
       {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />}
+      {isOwner && sbHidden.length > 0 && <style>{sbHidden.filter((k) => /^[a-z_]+$/.test(k)).map((k) => `nav [data-sb="${k}"]{display:none !important}`).join("\n")}</style>}
+      {isOwner && sbPanelOpen && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }} onClick={() => setSbPanelOpen(false)}>
+          <div className="bg-zinc-900 border border-zinc-700 max-w-md w-full p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-1">
+              <p className="text-xl font-black">Customize sidebar</p>
+              <button onClick={() => setSbPanelOpen(false)} className="text-zinc-500 hover:text-white text-lg">✕</button>
+            </div>
+            <p className="text-xs text-zinc-400 mb-4">Hide anything you don't want in your menu. Only you can see this, and it changes only your own view. Switch it back on any time.</p>
+            <div>
+              {SB_ITEMS.map(([key, label]) => {
+                const shown = !sbHidden.includes(key);
+                return (
+                  <div key={key} className="flex items-center justify-between py-2 border-b border-zinc-800">
+                    <span className={`text-sm ${shown ? "" : "text-zinc-500 line-through"}`}>{label}</span>
+                    <button onClick={() => toggleSbItem(key)} className={`text-[11px] font-mono uppercase tracking-widest px-3 py-1 border ${shown ? "border-green-500/50 text-green-400" : "border-zinc-600 text-zinc-400"}`}>{shown ? "Shown" : "Hidden"}</button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-zinc-500 mt-3">The home Dashboard always stays visible.</p>
+          </div>
+        </div>
+      )}
       {targetCheck && targetCheck.length > 0 && !targetReaction && (() => {
         const wins = targetCheck.filter((r: any) => r.status === "win").length;
         const misses = targetCheck.filter((r: any) => r.status === "miss").length;
@@ -3939,169 +3995,174 @@ else await fetchOutletReportsByDate(outletEntryDate);
             <span>▣</span> Dashboard
           </div>
           {!isOwner && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("messages"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "messages" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="messages" onClick={() => { fireBrownieTransition(); setActiveTab("messages"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "messages" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>💬</span> Messages
               {msgUnreadCount > 0 && <span className="ml-auto w-2 h-2 bg-accent rounded-full"></span>}
             </div>
           )}
           {(canAssign || hasOutlets) && (
-              <div onClick={() => { fireBrownieTransition(); setActiveTab("owner_outlets"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "owner_outlets" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+              <div data-sb="owner_outlets" onClick={() => { fireBrownieTransition(); setActiveTab("owner_outlets"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "owner_outlets" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🏪</span> Outlet Reports
               </div>
           )}
          {((user.outlets && user.outlets.length > 0) || canAssign) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("sales_target"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "sales_target" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="sales_target" onClick={() => { fireBrownieTransition(); setActiveTab("sales_target"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "sales_target" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🎯</span> Outlet P&amp;L
             </div>
           )}
                   {(user?.role === "Financial Analyst" || user?.role === "Owner") && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("purchase_vendors"); setSidebarOpen(false); fetchPurchaseVendors(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "purchase_vendors" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="purchase_vendors" onClick={() => { fireBrownieTransition(); setActiveTab("purchase_vendors"); setSidebarOpen(false); fetchPurchaseVendors(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "purchase_vendors" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🛒</span> Purchase &amp; Vendors
             </div>
           )}
           {(isFO || ["nishant","arun","vishnu","ahila","nilani"].includes(user?.id ?? "")) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("auto_reviews"); setSidebarOpen(false); fetchAutoReviews(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "auto_reviews" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="auto_reviews" onClick={() => { fireBrownieTransition(); setActiveTab("auto_reviews"); setSidebarOpen(false); fetchAutoReviews(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "auto_reviews" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>⭐</span> Auto Reviews
             </div>
           )}
-        <div onClick={() => { router.push("/leaderboard"); }} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors text-text-muted hover:text-text">
+        <div data-sb="leaderboard" onClick={() => { router.push("/leaderboard"); }} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors text-text-muted hover:text-text">
             <span>🏆</span> Leaderboard
           </div>
          {["nishant","arun","nilani","vishnu","ahila"].includes(user?.id ?? "") && (
-            <div onClick={() => { router.push("/orders-race"); }} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors text-text-muted hover:text-text">
+            <div data-sb="orders_race" onClick={() => { router.push("/orders-race"); }} className="flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors text-text-muted hover:text-text">
               <span>⚔️</span> Orders Race
             </div>
           )}
          {(canAssign || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("analytics"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "analytics" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="analytics" onClick={() => { fireBrownieTransition(); setActiveTab("analytics"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "analytics" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
              <span>◬</span> Analytics
             </div>
           )}
           {false && (canAssign || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("competition"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "competition" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="competition" onClick={() => { fireBrownieTransition(); setActiveTab("competition"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "competition" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🥊</span> Competition
             </div>
           )}
           {canViewItemPerf && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("item_perf"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "item_perf" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="item_perf" onClick={() => { fireBrownieTransition(); setActiveTab("item_perf"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "item_perf" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📈</span> Item Performance
             </div>
           )}
           {(isOwner || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("admin_dq"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "admin_dq" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="admin_dq" onClick={() => { fireBrownieTransition(); setActiveTab("admin_dq"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "admin_dq" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🛡</span> Admin &amp; Data Quality
             </div>
           )}
                     {canAssign && (
             <>
-             <div onClick={() => { fireBrownieTransition(); setActiveTab("all_reports"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "all_reports" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+             <div data-sb="all_reports" onClick={() => { fireBrownieTransition(); setActiveTab("all_reports"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "all_reports" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
                 <span>📋</span> Reports
               </div>
             </>
           )}
          {((user.outlets && user.outlets.length > 0) || canAssign) && (
-  <div onClick={() => { fireBrownieTransition(); setActiveTab("outlet_reports"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "outlet_reports" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+  <div data-sb="outlet_reports" onClick={() => { fireBrownieTransition(); setActiveTab("outlet_reports"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "outlet_reports" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
     <span>🏪</span> Outlets
   {Object.keys(outletReports).length < (user.outlets?.length || 0) && <span className="ml-auto w-2 h-2 bg-accent rounded-full"></span>}
   </div>
 )}
           {canAssign && (
             <>
-              <div onClick={() => { fireBrownieTransition(); setActiveTab("history"); setSidebarOpen(false); fetchHistoryReports(historyDate); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "history" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+              <div data-sb="history" onClick={() => { fireBrownieTransition(); setActiveTab("history"); setSidebarOpen(false); fetchHistoryReports(historyDate); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "history" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
              <span>📅</span> History
              </div>
             </>
           )}
                     {isOwner && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("team_dashboards"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "team_dashboards" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="team_dashboards" onClick={() => { fireBrownieTransition(); setActiveTab("team_dashboards"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "team_dashboards" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>👥</span> Team Dashboards
             </div>
           )}
           {(isOwner || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("active_status"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "active_status" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="active_status" onClick={() => { fireBrownieTransition(); setActiveTab("active_status"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "active_status" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🟢</span> Active Status
             </div>
           )}
           {isOwner && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("messages"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "messages" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="messages" onClick={() => { fireBrownieTransition(); setActiveTab("messages"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "messages" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>💬</span> Messages
               {msgUnreadCount > 0 && <span className="ml-auto w-2 h-2 bg-accent rounded-full"></span>}
             </div>
           )}
                   {(user?.role === "Financial Analyst" || user?.role === "Owner") && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("net_realisation"); setSidebarOpen(false); fetchNetRealisation(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "net_realisation" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="net_realisation" onClick={() => { fireBrownieTransition(); setActiveTab("net_realisation"); setSidebarOpen(false); fetchNetRealisation(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "net_realisation" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🧾</span> Net Realisation
             </div>
           )}
                 {user?.role === "Financial Analyst" && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("pnl"); setSidebarOpen(false); fetchPnl(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "pnl" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="pnl" onClick={() => { fireBrownieTransition(); setActiveTab("pnl"); setSidebarOpen(false); fetchPnl(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "pnl" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>💹</span> Channel P&amp;L
             </div>
           )}
                    {user?.role === "Financial Analyst" && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("contribution_margins"); setSidebarOpen(false); fetchContributionMargins(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "contribution_margins" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="contribution_margins" onClick={() => { fireBrownieTransition(); setActiveTab("contribution_margins"); setSidebarOpen(false); fetchContributionMargins(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "contribution_margins" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📐</span> Contribution Margins
             </div>
           )}
           {(user?.role === "Financial Analyst" || user?.role === "Owner" || user?.role === "Founder's Office") && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("cash_flow"); setSidebarOpen(false); fetchCashFlowForecast(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "cash_flow" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="cash_flow" onClick={() => { fireBrownieTransition(); setActiveTab("cash_flow"); setSidebarOpen(false); fetchCashFlowForecast(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "cash_flow" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📉</span> Profit Forecast
             </div>
           )}
           {(user?.role === "Financial Analyst" || user?.role === "Owner" || user?.role === "Founder's Office") && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("sales_forecast"); setSidebarOpen(false); fetchSalesForecast(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "sales_forecast" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="sales_forecast" onClick={() => { fireBrownieTransition(); setActiveTab("sales_forecast"); setSidebarOpen(false); fetchSalesForecast(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "sales_forecast" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📈</span> Sales Forecast
             </div>
           )}
                 {user?.role === "Financial Analyst" && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("payout"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "payout" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="payout" onClick={() => { fireBrownieTransition(); setActiveTab("payout"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "payout" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>💰</span> Payout
             </div>
           )}
                     {false && user?.role === "Owner" && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("reconciliation"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "reconciliation" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="reconciliation" onClick={() => { fireBrownieTransition(); setActiveTab("reconciliation"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "reconciliation" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>⚖️</span> Reconciliation
             </div>
           )}
           {hasReportDuty && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("my_report"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "my_report" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="my_report" onClick={() => { fireBrownieTransition(); setActiveTab("my_report"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "my_report" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📋</span> My Report
              {!todayReport && <span className="ml-auto w-2 h-2 bg-accent rounded-full"></span>}
             </div>
           )}
           {(user.role === "HR" || user?.role === "Owner") && (
-                <div onClick={() => { fireBrownieTransition(); setActiveTab("attendance"); setSidebarOpen(false); const staffRef = (user?.role === "Owner" ? { id: "nilani" } : user) as Staff; fetchAttendance(staffRef, attendanceDate); fetchAttendanceWeekOvertime(staffRef); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "attendance" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+                <div data-sb="attendance" onClick={() => { fireBrownieTransition(); setActiveTab("attendance"); setSidebarOpen(false); const staffRef = (user?.role === "Owner" ? { id: "nilani" } : user) as Staff; fetchAttendance(staffRef, attendanceDate); fetchAttendanceWeekOvertime(staffRef); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "attendance" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>👥</span> People &amp; Labour
             </div>
           )}
           {(user?.role === "Head Chef" || user?.role === "Owner" || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("production"); setSidebarOpen(false); fetchKChefs(); fetchKProduction(kDate); fetchKProducts(); fetchKPlan(kDate); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "production" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="production" onClick={() => { fireBrownieTransition(); setActiveTab("production"); setSidebarOpen(false); fetchKChefs(); fetchKProduction(kDate); fetchKProducts(); fetchKPlan(kDate); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "production" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🏭</span> Production
             </div>
           )}
           {(canAssign || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("ops_audits"); setSidebarOpen(false); fetchAuditReports(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "ops_audits" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="ops_audits" onClick={() => { fireBrownieTransition(); setActiveTab("ops_audits"); setSidebarOpen(false); fetchAuditReports(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "ops_audits" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🔍</span> Operations &amp; Audits
             </div>
           )}
           {isArun && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("outlet_targets"); setSidebarOpen(false); fetchOutletTargetUpdates(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "outlet_targets" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="outlet_targets" onClick={() => { fireBrownieTransition(); setActiveTab("outlet_targets"); setSidebarOpen(false); fetchOutletTargetUpdates(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "outlet_targets" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>🎯</span> Outlet Targets
             </div>
           )}
                             {(canAssign || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("fines"); setSidebarOpen(false); fetchFines(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "fines" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="fines" onClick={() => { fireBrownieTransition(); setActiveTab("fines"); setSidebarOpen(false); fetchFines(); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "fines" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>⚖️</span> Fines
             </div>
           )}
                    {(isOwner || isFO) && (
-            <div onClick={() => { fireBrownieTransition(); setActiveTab("niranjana_report"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "niranjana_report" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+            <div data-sb="niranjana_report" onClick={() => { fireBrownieTransition(); setActiveTab("niranjana_report"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "niranjana_report" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
               <span>📝</span> Niranjana's Report
             </div>
           )}
-          <div onClick={() => { fireBrownieTransition(); setActiveTab("help"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "help" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
+          <div data-sb="help" onClick={() => { fireBrownieTransition(); setActiveTab("help"); setSidebarOpen(false); }} className={`flex items-center gap-3 px-3 py-2.5 text-sm font-medium cursor-pointer transition-colors ${activeTab === "help" ? "text-text bg-surface-2 border-l-2 border-accent" : "text-text-muted hover:text-text"}`}>
             <span>🛟</span> Help
           </div>
+          {isOwner && (
+            <div onClick={() => setSbPanelOpen(true)} className="flex items-center gap-3 px-3 py-2.5 mt-3 text-xs font-mono uppercase tracking-widest cursor-pointer text-text-faint hover:text-text border-t border-line">
+              <span>⚙</span> Customize sidebar
+            </div>
+          )}
         </nav>
       </aside>
 
