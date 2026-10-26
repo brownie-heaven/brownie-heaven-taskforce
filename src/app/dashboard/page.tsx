@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { celebrate } from "../celebrate";
 import { computeScores, type ScoreRow } from "@/lib/score";
+import { computeMonthEnd, type OutletMonthEnd } from "@/lib/monthEndProjection";
 import PayoutTab from "./PayoutTab";
 import FounderDashboard from "./FounderDashboard";
 import CommandCentre from "./CommandCentre";
@@ -1332,14 +1333,11 @@ export default function DashboardPage() {
     });
 
     // Month-end sales projection, per outlet: real month-to-date + forecast
-    // for the remaining days of the current calendar month (same
-    // day-of-week average × trend, run out past day 7 as needed).
-    const y = todayIst.getUTCFullYear(), m = todayIst.getUTCMonth();
-    const daysInMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-    const monthStartStr = `${y}-${String(m + 1).padStart(2, "0")}-01`;
-    const mtdRows = all.filter((r) => r.report_date >= monthStartStr && r.report_date <= todayStr);
-    const remainingDates: string[] = [];
-    for (let dnum = todayIst.getUTCDate() + 1; dnum <= daysInMonth; dnum++) remainingDates.push(`${y}-${String(m + 1).padStart(2, "0")}-${String(dnum).padStart(2, "0")}`);
+    // for the remaining days. This is the SAME shared calculation the Command
+    // Centre uses (src/lib/monthEndProjection.ts), so both show one number.
+    const monthEndCalc = computeMonthEnd(all as any, OUTLETS, todayStr);
+    const monthEndByOutlet: Record<string, OutletMonthEnd> = {};
+    monthEndCalc.perOutlet.forEach((x) => { monthEndByOutlet[x.oid] = x; });
 
     // Per-outlet monthly fixed costs — same source and math as the Outlet
     // P&L tab (sales_target.line_items.fixed), so the numbers here line up
@@ -1355,15 +1353,8 @@ export default function DashboardPage() {
     });
 
     const monthEnd = OUTLETS.map((o) => {
-      const mtdOutletRows = mtdRows.filter((r) => r.outlet_id === o);
-      const mtdShop = mtdOutletRows.reduce((s, r) => s + (Number(r.shop_sales_value) || 0), 0);
-      const mtdOnline = mtdOutletRows.reduce((s, r) => s + (Number(r.swiggy_sales_value) || 0) + (Number(r.zomato_sales_value) || 0), 0);
-      let remShop = 0, remOnline = 0;
-      remainingDates.forEach((dateStr) => {
-        const dow = new Date(dateStr + "T00:00:00Z").getUTCDay();
-        remShop += avg(perOutlet[o].shop[dow]) * trendFactor[o];
-        remOnline += (avg(perOutlet[o].swiggy[dow]) + avg(perOutlet[o].zomato[dow])) * trendFactor[o];
-      });
+      const _me = monthEndByOutlet[o] || { oid: o, mtdShop: 0, mtdOnline: 0, remShop: 0, remOnline: 0 };
+      const { mtdShop, mtdOnline, remShop, remOnline } = _me;
       const mtd = mtdShop + mtdOnline;
       const remaining = remShop + remOnline;
       const projShop = mtdShop + remShop;
@@ -1385,7 +1376,7 @@ export default function DashboardPage() {
     setSfOutlets(outletForecasts);
     setSfMonthEnd(monthEnd);
     setSfMonthLabel(todayIst.toLocaleDateString("en-IN", { month: "long", year: "numeric" }));
-    setSfDaysRemaining(remainingDates.length);
+    setSfDaysRemaining(monthEndCalc.daysRemaining);
     setSfLoading(false);
   };
   useEffect(() => { if (activeTab === "sales_forecast") fetchSalesForecast(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [activeTab]);
@@ -8260,5 +8251,3 @@ else await fetchOutletReportsByDate(outletEntryDate);
     </div>
   );
 }
-
-
