@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import supabaseStock from "@/lib/supabaseStock";
 import { fetchRealFoodCostPct, REAL_FOOD_COST_WINDOW_DAYS } from "@/lib/realFoodCost";
 import { fetchRealCommissionPct, REAL_COMMISSION_WINDOW_DAYS } from "@/lib/realCommission";
+import { computeMonthEnd, fetchProjectionRows } from "@/lib/monthEndProjection";
 
 type Staff = { id: string; name: string; role: string; outlets?: string[] };
 
@@ -37,7 +38,8 @@ const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const lakh = (n: number) => "₹" + (n / 100000).toFixed(2) + " L";
 
   export default function CommandCentre({ user }: { user: Staff }) {
-  const today = new Date().toISOString().split("T")[0];
+  // India date (IST), so this agrees with the Sales Forecast tab at any hour.
+  const today = new Date(Date.now() + 5.5 * 60 * 60 * 1000).toISOString().split("T")[0];
   const _now0 = new Date();
   const _fmtDate = (dd: Date) => `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, "0")}-${String(dd.getDate()).padStart(2, "0")}`;
   const _defaultDate = _now0.getDate() === 1 ? _fmtDate(new Date(_now0.getFullYear(), _now0.getMonth(), 0)) : today;
@@ -49,6 +51,8 @@ const lakh = (n: number) => "₹" + (n / 100000).toFixed(2) + " L";
   const [stFixed, setStFixed] = useState<Record<string, any>>({});
   const [stTargets, setStTargets] = useState<Record<string, { a?: number; b?: number }>>({});
   const [stMonthSales, setStMonthSales] = useState<Record<string, { net: number; online: number }>>({});
+  // Projected month-end sales from the shared calculation (same as Sales Forecast tab).
+  const [projFc, setProjFc] = useState<number | null>(null);
   const [revs, setRevs] = useState<any[]>([]);
   const [payouts, setPayouts] = useState<any[]>([]);
   const [atlasResults, setAtlasResults] = useState<any[]>([]);
@@ -121,6 +125,10 @@ const lakh = (n: number) => "₹" + (n / 100000).toFixed(2) + " L";
         sm[oid].online += (Number(row.swiggy_sales_value) || 0) + (Number(row.zomato_sales_value) || 0);
       });
       setStFixed(fm); setStMonthSales(sm); setStTargets(tm);
+      try {
+        const _projRows = await fetchProjectionRows(supabase, date);
+        setProjFc(computeMonthEnd(_projRows, OUTLETS, date).projected);
+      } catch (e) { console.error("month-end projection failed", e); setProjFc(null); }
       setLoading(false);
     })();
   }, [date, monthStart]);
@@ -202,7 +210,8 @@ const lakh = (n: number) => "₹" + (n / 100000).toFixed(2) + " L";
   const fixedFrac = daysInMonth > 0 ? salesDays / daysInMonth : 0;
   const mtdFin = companyFinancials(mtd, mOnline, totalFixedAllOutlets * fixedFrac);
   const runRate = salesDays > 0 ? mtd / salesDays : 0;
-  const projected = runRate * daysInMonth;
+  // Same shared calculation as the Sales Forecast tab. Falls back to the simple daily-average only if it could not be loaded.
+  const projected = projFc ?? runRate * daysInMonth;
   const daysLeft = Math.max(daysInMonth - salesDays, 0);
   const required = daysLeft > 0 ? (MONTHLY_TARGET - mtd) / daysLeft : 0;
   const targetPct = MONTHLY_TARGET > 0 ? (mtd / MONTHLY_TARGET) * 100 : 0;
