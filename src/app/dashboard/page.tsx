@@ -3591,9 +3591,13 @@ icbh_zomato_rating: parseFloat(d.icbh_zomato_rating) || null,
         if (l.max_value != null && val > Number(l.max_value)) _over.push(`${nm} sales value: you entered ₹${val.toLocaleString("en-IN")}, the limit is ₹${Number(l.max_value).toLocaleString("en-IN")}`);
       });
       if (_over.length) {
-        setOutletSubmitting(false);
-        alert("Report NOT submitted — some numbers look too high:\n\n" + _over.join("\n") + "\n\nPlease check for an extra zero and correct it. If the numbers are really correct, ask Niranjana or Nishant to raise this outlet's limit.");
-        return;
+        // A number above the limit may still be a real busy day, so ask twice
+        // before saving. Cancel at either step goes back to the form (nothing is saved).
+        const _ok1 = confirm("⚠️ Some numbers look too high:\n\n" + _over.join("\n") + "\n\nPlease check for an extra zero.\nClick OK ONLY if these numbers are really correct.\nClick Cancel to go back and fix them.");
+        const _ok2 = _ok1 && confirm("Please confirm once more.\n\n" + _over.join("\n") + "\n\nAre you sure these numbers are TRUE for this day?");
+        if (!_ok2) { setOutletSubmitting(false); return; }
+        // Leave a visible note on the report so the owner can see it was confirmed.
+        (payload as any).issues = ((payload as any).issues ? (payload as any).issues + " | " : "") + "Above-limit numbers confirmed by staff: " + _over.join("; ");
       }
     }
   }
