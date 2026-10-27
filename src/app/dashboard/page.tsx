@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { celebrate } from "../celebrate";
 import { computeScores, type ScoreRow } from "@/lib/score";
 import { computeMonthEnd, type OutletMonthEnd } from "@/lib/monthEndProjection";
+import { ANNA_NAGAR_HANDOVER_FROM, annaNagarOwnerOn, istToday } from "@/lib/outletOwner";
 import PayoutTab from "./PayoutTab";
 import FounderDashboard from "./FounderDashboard";
 import CommandCentre from "./CommandCentre";
@@ -92,18 +93,26 @@ const brandSalesItems = (r: any): { label: string; value: string; color?: string
 };
 const BRAND_SALES_KEYS =["shop", "swiggy", "zomato"].flatMap((ch) => ["bh", "cbh"].flatMap((b) => [`${b}_${ch}_sales_count`, `${b}_${ch}_sales_value`]));
 
+// Anna Nagar moves from Vishnu to Stephen on ANNA_NAGAR_HANDOVER_FROM (switches by itself).
+const _AN_STEPHEN = istToday() >= ANNA_NAGAR_HANDOVER_FROM;
 const ALL_STAFF = [
   { id: "nishant", name: "Nishant Vijayakumar", role: "Owner", report_time: null, outlets: [] },
   { id: "arun", name: "Arun Kumar", role: "Manager", report_time: "22:00", outlets: [] },
   { id: "nilani", name: "Nilani Nallamuthu", role: "HR", report_time: "22:00", outlets: [] },
   { id: "gowtham", name: "Gowtham", role: "Purchase Manager", report_time: "22:00", outlets: [] },
-  { id: "vishnu", name: "Vishnu", role: "Asst. Ops Manager", report_time: "22:00", outlets: ["velachery","perumbakkam","tambaram","porur","anna_nagar","vadapalani"] },
+  { id: "vishnu", name: "Vishnu", role: "Asst. Ops Manager", report_time: "22:00", outlets: ["velachery","perumbakkam","tambaram","porur",...(_AN_STEPHEN ? [] : ["anna_nagar"]),"vadapalani"] },
   { id: "ahila", name: "Ahila", role: "Custom Cakes & Asst Ops", report_time: "22:00", outlets: ["adayar","bsr_mall","pallavaram","ra_puram","besant_nagar"] },
-  { id: "stephen", name: "Stephen", role: "Outlet Manager", report_time: null, outlets: ["royapettah"] },
+  { id: "stephen", name: "Stephen", role: "Outlet Manager", report_time: null, outlets: ["royapettah",...(_AN_STEPHEN ? ["anna_nagar"] : [])] },
   { id: "niranjana", name: "Niranjana", role: "Founder's Office", report_time: null, outlets: [] },
   { id: "rafiq", name: "Rafiq", role: "Head Chef", report_time: null, outlets: [] },
   { id: "ajay", name: "Ajay", role: "Financial Analyst", report_time: null, outlets: [] },
 ];
+// Who looks after an outlet on a given date (old Anna Nagar reports stay with Vishnu).
+const staffForOutlet = (oid: string, date?: string | null) => {
+  if (oid === "anna_nagar") { const id = annaNagarOwnerOn(date || istToday()); return ALL_STAFF.find((s) => s.id === id); }
+  return ALL_STAFF.find((s) => (s.outlets as string[]).includes(oid));
+};
+
 // Former staff: no longer in the app, but their old reports/tasks still show their name.
 const FORMER_STAFF: Record<string, string> = { bharani: "Bharani" };
 
@@ -2986,7 +2995,7 @@ export default function DashboardPage() {
   if (historyOutletReports.length === 0) { alert("No outlet reports for this date."); return; }
   const headers = ["Outlet", "Manager", "Date", "Shop Sales Value", "Shop Sales Count", "Swiggy Value", "Swiggy Count", "Zomato Value", "Zomato Count", "Total Sales", "BH Sales", "CBH Sales", "Target", "Swiggy Live", "Zomato Live", "Discount Running", "Discount Rate Good", "Unavailable Items", "Expiry Count", "Expiry Items", "Complimentary Count", "Complimentary Product Name", "Complimentary Reason", "Issues", "Action Taken", "Submitted At", "Late"];
   const rows = historyOutletReports.map(r => {
-    const manager = ALL_STAFF.find(s => (s.outlets as string[]).includes(r.outlet_id))?.name || "—";
+    const manager = staffForOutlet(r.outlet_id, r.report_date)?.name || "—";
     const total = Number(r.shop_sales_value) + Number(r.swiggy_sales_value) + Number(r.zomato_sales_value);
     return [
       OUTLET_NAMES[r.outlet_id] || r.outlet_id.replace(/_/g, " "),
@@ -3677,6 +3686,7 @@ else await fetchOutletReportsByDate(outletEntryDate);
   // Saved in app_settings (key sidebar_hidden_nishant) so it follows him across devices.
   const [sbHidden, setSbHidden] = useState<string[]>([]);
   const [sbPanelOpen, setSbPanelOpen] = useState(false);
+  const [anNoticeShut, setAnNoticeShut] = useState(false);
   useEffect(() => {
     if (user?.role !== "Owner") return;
     (async () => {
@@ -3920,6 +3930,16 @@ else await fetchOutletReportsByDate(outletEntryDate);
       {isFO && <NudgeToast />}
       {sidebarOpen && <div className="fixed inset-0 bg-black/50 z-30 md:hidden" onClick={() => setSidebarOpen(false)} />}
       {isOwner && sbHidden.length > 0 && <style>{sbHidden.filter((k) => /^[a-z_]+$/.test(k)).map((k) => `nav [data-sb="${k}"]{display:none !important}`).join("\n")}</style>}
+      {!anNoticeShut && istToday() === ANNA_NAGAR_HANDOVER_FROM && (user?.id === "stephen" || user?.id === "vishnu") && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 80, background: "#facc15", color: "#000", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", fontWeight: 700, fontSize: "14px" }}>
+          <span>
+            {user?.id === "stephen"
+              ? "📌 From today you also file the ANNA NAGAR outlet report (along with Royapettah). Please remember to file both today."
+              : "📌 From today ANNA NAGAR is handled by Stephen. You no longer file Anna Nagar — your other outlets stay with you."}
+          </span>
+          <button onClick={() => setAnNoticeShut(true)} style={{ background: "#000", color: "#facc15", padding: "4px 12px", fontWeight: 900 }}>OK</button>
+        </div>
+      )}
       {isOwner && sbPanelOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 70, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }} onClick={() => setSbPanelOpen(false)}>
           <div className="bg-zinc-900 border border-zinc-700 max-w-md w-full p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -5558,7 +5578,7 @@ else await fetchOutletReportsByDate(outletEntryDate);
                 </div>
                 {(outletFilter === "all" ? OUTLETS : [outletFilter]).map(o => {
                   const rep = allOutletReports.find(r => r.outlet_id === o);
-                  const mgr = ALL_STAFF.find(s => (s.outlets as string[]).includes(o));
+                  const mgr = staffForOutlet(o, rep?.report_date);
                   const oTotal = rep ? (Number(rep.shop_sales_value) || 0) + (Number(rep.swiggy_sales_value) || 0) + (Number(rep.zomato_sales_value) || 0) : 0;
                   const oTgt = rep ? Number(rep.target) || 0 : 0;
                   const hit = oTgt > 0 && oTotal >= oTgt;
@@ -6330,7 +6350,7 @@ else await fetchOutletReportsByDate(outletEntryDate);
       {!expandedOutlet && <p className="text-center text-sm text-zinc-600 py-10">Tap an outlet donut above to open its full report.</p>}
       {OUTLETS.filter(o => o === expandedOutlet).map(o => {
         const report = allOutletReports.find(r => r.outlet_id === o);
-      const manager = ALL_STAFF.find(s => (s.outlets as string[]).includes(o));
+      const manager = staffForOutlet(o, report?.report_date);
         return (
           <div key={o} className={`bg-[#131316] border ${report ? "border-green-400/30" : "border-zinc-800"} p-5`}>
             <div className="flex items-center justify-between mb-4">
