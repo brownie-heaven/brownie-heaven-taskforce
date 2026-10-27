@@ -1,3 +1,4 @@
+import { ownerOn, istToday } from "./outletOwner";
 // Matches the outlet name that appears in a review email (e.g. "Brownie Heaven Royapettah",
 // "Brownie Heaven, Pallavaram") to your internal outlet_id, and finds who owns that outlet.
 // Kept separate from outletMap.ts, which is for the Stock/margin integration, not reviews.
@@ -60,5 +61,5 @@ export function matchReviewOutletId(rawOutletName: string): string | null {
 }
 
 export function staffIdForReviewOutlet(outletId: string): string {
-  return STAFF_BY_OUTLET[outletId] || "niranjana"; // fallback: Founder's Office
+  return ownerOn(outletId, istToday(), STAFF_BY_OUTLET[outletId]) || "niranjana"; // fallback: Founder's Office
 }
