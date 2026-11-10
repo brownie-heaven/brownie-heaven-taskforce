@@ -542,6 +542,54 @@ export default function DashboardPage() {
     const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), dd = String(d.getDate()).padStart(2, "0");
     return `${y}-${m}-${dd}`;
   };
+  // Expiry & Complimentary download (dates picked = SALES dates; report_date = sales date + 1)
+  const [wcFrom, setWcFrom] = useState("2026-10-02");
+  const [wcTo, setWcTo] = useState(() => new Date(Date.now() + 5.5 * 3600 * 1000 - 86400000).toISOString().slice(0, 10));
+  const [wcBusy, setWcBusy] = useState(false);
+  const downloadWasteComp = async () => {
+    if (!wcFrom || !wcTo || wcFrom > wcTo) { alert("Pick a valid From and To date."); return; }
+    setWcBusy(true);
+    try {
+      const plusOne = (d: string) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + 1); return x.toISOString().slice(0, 10); };
+      const allowed: string[] = canAssign ? [...OUTLETS] : ((user?.outlets as string[] | undefined) || []);
+      const outlets = repOutlets.length > 0 ? repOutlets.filter((o: string) => allowed.includes(o)) : allowed;
+      let rows: any[] = [];
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from("outlet_reports")
+          .select("outlet_id, report_date, staff_id, expiry_count, expiry_items, complimentary_count, complimentary_items, complimentary_reason")
+          .in("outlet_id", outlets).gte("report_date", plusOne(wcFrom)).lte("report_date", plusOne(wcTo))
+          .order("report_date", { ascending: true }).order("outlet_id", { ascending: true }).range(from, from + 999);
+        if (error) { alert("Could not load: " + error.message); return; }
+        rows = rows.concat(data || []);
+        if (!data || data.length < 1000) break;
+      }
+      const blank = (v: any) => { const t = String(v ?? "").trim().toLowerCase(); return t === "" || t === "none"; };
+      const entries = rows.filter((r: any) => (Number(r.expiry_count) || 0) > 0 || (Number(r.complimentary_count) || 0) > 0 || !blank(r.expiry_items) || !blank(r.complimentary_items));
+      if (entries.length === 0) { alert("No expiry or complimentary entries in this range."); return; }
+      const detail = entries.map((r: any) => ({
+        "Date": salesDateOf(r.report_date),
+        "Outlet": (OUTLET_NAMES as any)[r.outlet_id] || r.outlet_id,
+        "Expiry Count": Number(r.expiry_count) || 0,
+        "Expired Products": blank(r.expiry_items) ? "" : r.expiry_items,
+        "Complimentary Count": Number(r.complimentary_count) || 0,
+        "Complimentary Products": blank(r.complimentary_items) ? "" : r.complimentary_items,
+        "Reason": blank(r.complimentary_reason) ? "" : r.complimentary_reason,
+      }));
+      const by: Record<string, any> = {};
+      entries.forEach((r: any) => {
+        const n = (OUTLET_NAMES as any)[r.outlet_id] || r.outlet_id;
+        const o = by[n] || (by[n] = { "Outlet": n, "Days with Expiry": 0, "Total Expired": 0, "Days with Complimentary": 0, "Total Complimentary": 0 });
+        const e = Number(r.expiry_count) || 0, c = Number(r.complimentary_count) || 0;
+        if (e > 0) o["Days with Expiry"]++;
+        if (c > 0) o["Days with Complimentary"]++;
+        o["Total Expired"] += e; o["Total Complimentary"] += c;
+      });
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), "Wastage & Complimentary");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(Object.values(by)), "Summary");
+      XLSX.writeFile(wb, `Wastage_Complimentary_${wcFrom}_to_${wcTo}.xlsx`);
+    } finally { setWcBusy(false); }
+  };
   const buildRangeRows = (rows: any[]) => rows.map(r => {
     const shop = Number(r.shop_sales_value) || 0, sw = Number(r.swiggy_sales_value) || 0, zo = Number(r.zomato_sales_value) || 0;
     return { Date: salesDateOf(r.report_date), Outlet: (typeof OUTLET_NAMES !== "undefined" ? (OUTLET_NAMES as any)[r.outlet_id] : r.outlet_id) || r.outlet_id, RangeLabel: r._rangeLabel || "", Shop: shop, Swiggy: sw, Zomato: zo, Total: shop + sw + zo, "Shop Orders": Number(r.shop_sales_count) || 0, "Swiggy Orders": Number(r.swiggy_sales_count) || 0, "Zomato Orders": Number(r.zomato_sales_count) || 0, Target: Number(r.target) || 0, Discount: Number(r.discount_given) || 0, Late: r.is_late ? "Yes" : "No", Issues: r.issues || "" };
@@ -6310,6 +6358,16 @@ else await fetchOutletReportsByDate(outletEntryDate);
       const chLabels = [["Shop", cols[0]], ["Swiggy", cols[1]], ["Zomato", cols[2]]] as [string, string][];
       return (
         <div className="mb-6">
+          <div className="bg-[#131316] border border-zinc-800 p-5 mb-6">
+            <p className="text-sm font-bold text-white mb-1">📥 Download expiry &amp; complimentary</p>
+            <p className="text-[10px] font-mono text-zinc-500 mb-3">pick sales dates · uses the outlets selected above (none = all) · Excel</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="date" value={wcFrom} onChange={(e) => setWcFrom(e.target.value)} className="bg-[#0a0a0b] border border-zinc-700 text-white text-xs px-2 py-2" />
+              <span className="text-zinc-500 text-xs">to</span>
+              <input type="date" value={wcTo} onChange={(e) => setWcTo(e.target.value)} className="bg-[#0a0a0b] border border-zinc-700 text-white text-xs px-2 py-2" />
+              <button onClick={downloadWasteComp} disabled={wcBusy} className="px-4 py-2 text-xs font-bold bg-emerald-600 text-white disabled:opacity-50">{wcBusy ? "Preparing…" : "⬇ Excel"}</button>
+            </div>
+          </div>
           <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-3">Tap an outlet to open its full report ↓</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {(canAssign ? OUTLETS : (user.outlets || [])).map(o => {
